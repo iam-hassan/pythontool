@@ -1,0 +1,9 @@
+{
+  "name": "fmcsa-mc-checker",
+  "version": "1.0.0",
+  "description": "FMCSA SAFER MC Number Checker - Find Active Authorized Carriers",
+  "private": true,
+  "dependencies": {
+    "cheerio": "^1.0.0"
+  }
+}

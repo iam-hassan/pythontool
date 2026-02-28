@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FMCSA Carrier Finder | MC Number Scanner</title>
+    <meta
+      name="description"
+      content="Automated FMCSA SAFER MC Number Scanner. Find active authorized carriers by scanning MC number ranges. Export results to CSV or Excel."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/style.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚛</text></svg>"
+    />
+  </head>
+  <body>
+    <!-- Animated background -->
+    <div class="bg-effects">
+      <div class="bg-orb bg-orb-1"></div>
+      <div class="bg-orb bg-orb-2"></div>
+      <div class="bg-orb bg-orb-3"></div>
+    </div>
+
+    <!-- Header -->
+    <header class="header">
+      <div class="header-content">
+        <div class="logo">
+          <span class="logo-icon">🚛</span>
+          <div>
+            <h1 class="logo-title">FMCSA Carrier Finder</h1>
+            <p class="logo-subtitle">Automated MC Number Scanner</p>
+          </div>
+        </div>
+        <div class="connection-status" id="connectionStatus">
+          <span class="status-dot"></span>
+          <span class="status-text">Checking...</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <!-- Quick Check Section -->
+      <section class="card glass-card" id="quickCheckSection">
+        <div class="card-header">
+          <div class="card-icon">🔍</div>
+          <div>
+            <h2 class="card-title">Quick MC Lookup</h2>
+            <p class="card-desc">Check a single MC number instantly</p>
+          </div>
+        </div>
+        <div class="quick-check-form">
+          <div class="input-group">
+            <label for="quickMcInput">MC Number</label>
+            <div class="input-with-btn">
+              <input
+                type="number"
+                id="quickMcInput"
+                placeholder="e.g. 1750192"
+                min="1"
+              />
+              <button
+                class="btn btn-accent"
+                id="btnQuickCheck"
+                onclick="quickCheck()"
+              >
+                <span class="btn-text">Check</span>
+                <span class="btn-loader hidden"></span>
+              </button>
+            </div>
+          </div>
+          <div class="quick-result hidden" id="quickResult"></div>
+        </div>
+      </section>
+
+      <!-- Batch Scanner Section -->
+      <section class="card glass-card" id="batchSection">
+        <div class="card-header">
+          <div class="card-icon">⚡</div>
+          <div>
+            <h2 class="card-title">Batch Scanner</h2>
+            <p class="card-desc">
+              Scan a range of MC numbers to find active carriers
+            </p>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="input-group">
+            <label for="startMc">Start MC Number</label>
+            <input type="number" id="startMc" value="1700001" min="1" />
+          </div>
+          <div class="input-group">
+            <label for="endMc">End MC Number</label>
+            <input type="number" id="endMc" value="1700100" min="1" />
+          </div>
+          <div class="input-group">
+            <label for="batchSize">Batch Size</label>
+            <input type="number" id="batchSize" value="5" min="1" max="10" />
+            <span class="input-hint">1 to 10 per request</span>
+          </div>
+        </div>
+
+        <div class="controls">
+          <button
+            class="btn btn-primary btn-lg"
+            id="btnStart"
+            onclick="startScan()"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <polygon points="5,3 19,12 5,21" />
+            </svg>
+            Start Scan
+          </button>
+          <button
+            class="btn btn-secondary"
+            id="btnPause"
+            onclick="togglePause()"
+            disabled
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="4" width="4" height="16" />
+              <rect x="14" y="4" width="4" height="16" />
+            </svg>
+            Pause
+          </button>
+          <button
+            class="btn btn-danger"
+            id="btnStop"
+            onclick="stopScan()"
+            disabled
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="4" y="4" width="16" height="16" rx="2" />
+            </svg>
+            Stop
+          </button>
+        </div>
+      </section>
+
+      <!-- Stats Grid -->
+      <section class="stats-grid" id="statsSection">
+        <div class="stat-card">
+          <div class="stat-icon stat-icon-checked">📊</div>
+          <div class="stat-value" id="statChecked">0</div>
+          <div class="stat-label">Checked</div>
+        </div>
+        <div class="stat-card stat-card-found">
+          <div class="stat-icon stat-icon-found">✅</div>
+          <div class="stat-value" id="statFound">0</div>
+          <div class="stat-label">Carriers Found</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon stat-icon-errors">⚠️</div>
+          <div class="stat-value" id="statErrors">0</div>
+          <div class="stat-label">Errors</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon stat-icon-speed">⚡</div>
+          <div class="stat-value" id="statSpeed">0/s</div>
+          <div class="stat-label">Speed</div>
+        </div>
+      </section>
+
+      <!-- Progress Bar -->
+      <section class="progress-section hidden" id="progressSection">
+        <div class="progress-header">
+          <span class="progress-label" id="progressLabel">Scanning...</span>
+          <span class="progress-eta" id="progressEta">ETA: calculating...</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+        </div>
+        <div class="progress-footer">
+          <span class="progress-pct" id="progressPct">0%</span>
+          <span class="progress-range" id="progressRange"></span>
+        </div>
+      </section>
+
+      <!-- Results Table -->
+      <section class="card glass-card" id="resultsSection">
+        <div class="results-header">
+          <div>
+            <h2 class="card-title">Found Carriers</h2>
+            <p class="card-desc" id="resultsCount">No results yet</p>
+          </div>
+          <div class="export-buttons">
+            <button
+              class="btn btn-outline"
+              onclick="exportCSV()"
+              id="btnExportCsv"
+              disabled
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              CSV
+            </button>
+            <button
+              class="btn btn-outline"
+              onclick="exportExcel()"
+              id="btnExportExcel"
+              disabled
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Excel
+            </button>
+          </div>
+        </div>
+
+        <div class="table-wrapper">
+          <table class="results-table" id="resultsTable">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>MC Number</th>
+                <th>Legal Name</th>
+                <th>Entity Type</th>
+                <th>Status</th>
+                <th>Authority</th>
+                <th>USDOT</th>
+                <th>Phone</th>
+                <th>Address</th>
+                <th>Power Units</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody"></tbody>
+          </table>
+          <div class="empty-state" id="emptyState">
+            <div class="empty-icon">🚛</div>
+            <p>
+              No carriers found yet. Start a scan to discover active carriers.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Log Console -->
+      <section class="card glass-card" id="logSection">
+        <div class="card-header">
+          <div class="card-icon">📋</div>
+          <h2 class="card-title">Scan Log</h2>
+        </div>
+        <div class="log-console" id="logConsole">
+          <div class="log-entry log-info">
+            Ready to scan. Configure range and click Start.
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>
+        FMCSA Carrier Finder &mdash; Queries the
+        <a
+          href="https://safer.fmcsa.dot.gov/CompanySnapshot.aspx"
+          target="_blank"
+          rel="noopener"
+          >FMCSA SAFER</a
+        >
+        database
+      </p>
+    </footer>
+
+    <!-- SheetJS for Excel export -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>
