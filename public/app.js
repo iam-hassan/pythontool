@@ -10,7 +10,7 @@
 
 // ── Constants ─────────────────────────────────────────────
 
-const PAGE_SIZE = 25;          // rows visible per page
+const PAGE_SIZE = 10;          // rows visible per page
 const MAX_LOG_ENTRIES = 50;    // max log lines in DOM
 const UI_THROTTLE_MS = 300;    // min ms between DOM stat updates
 
@@ -214,6 +214,32 @@ function showQuickResult(result, mcNumber) {
 }
 
 // ══════════════════════════════════════════════════════════
+// ── Cell text clamping (show more / show less) ───────────
+// ══════════════════════════════════════════════════════════
+
+const CLAMP_THRESHOLD = 60; // characters; anything longer gets clamped
+
+function clampCell(text) {
+  if (!text || text.length <= CLAMP_THRESHOLD) {
+    return `<span class="cell-text">${text}</span>`;
+  }
+  return (
+    `<div class="cell-clamp clamped">` +
+      `<span class="cell-text">${text}</span>` +
+      `<button class="clamp-toggle" onclick="toggleClamp(this)">show more</button>` +
+    `</div>`
+  );
+}
+
+function toggleClamp(btn) {
+  const wrapper = btn.closest('.cell-clamp');
+  if (!wrapper) return;
+  const isClamped = wrapper.classList.contains('clamped');
+  wrapper.classList.toggle('clamped');
+  btn.textContent = isClamped ? 'show less' : 'show more';
+}
+
+// ══════════════════════════════════════════════════════════
 // ── Paginated Results Table ──────────────────────────────
 // ══════════════════════════════════════════════════════════
 
@@ -258,10 +284,10 @@ function renderResultsPage(page) {
       `<td style="font-weight:600;color:var(--text-1)">${d.legal_name || 'N/A'}</td>` +
       `<td><span class="badge badge-cyan">${d.entity_type || 'N/A'}</span></td>` +
       `<td><span class="badge badge-green">${d.usdot_status || 'N/A'}</span></td>` +
-      `<td style="font-size:0.78rem">${d.operating_authority_status || 'N/A'}</td>` +
+      `<td>${clampCell(d.operating_authority_status || 'N/A')}</td>` +
       `<td>${d.usdot_number || 'N/A'}</td>` +
       `<td>${d.phone || 'N/A'}</td>` +
-      `<td style="font-size:0.78rem;max-width:200px">${d.physical_address || 'N/A'}</td>` +
+      `<td>${clampCell(d.physical_address || 'N/A')}</td>` +
       `<td>${d.power_units || 'N/A'}</td>`;
     frag.appendChild(tr);
   }
@@ -474,24 +500,17 @@ async function startScan() {
     throttledUiUpdate(false);
     updateProgress(current, startMC, endMC);
 
-    // Only re-render the table page when a new carrier was found
-    // and the user is on the last page (auto-follow mode)
+    // When new carriers found, stay on current page (page 1 by default)
+    // Just update pagination info so user sees updated count
     if (foundThisBatch) {
-      const totalPages = getTotalPages();
-      // Flash the found card
       const foundCard = document.querySelector('.stat-card-found');
       if (foundCard) {
         foundCard.classList.remove('flash-found');
         void foundCard.offsetWidth;
         foundCard.classList.add('flash-found');
       }
-      // Auto-follow: if user is viewing the last page, re-render it
-      if (state.currentPage >= totalPages - 1) {
-        renderResultsPage(totalPages);
-      } else {
-        // Just update pagination info without re-rendering rows
-        updatePaginationControls();
-      }
+      // Re-render current page (page 1) so new rows appear there
+      renderResultsPage(state.currentPage);
     }
   }
 

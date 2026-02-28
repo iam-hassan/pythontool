@@ -753,6 +753,41 @@ body {
   font-size: 0.9rem;
 }
 
+/* ── Cell clamp (show more / show less) ────────────────── */
+
+.cell-clamp {
+  position: relative;
+  font-size: 0.78rem;
+  max-width: 220px;
+}
+
+.cell-clamp.clamped .cell-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.clamp-toggle {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--cyan);
+  font-family: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.clamp-toggle:hover {
+  color: var(--purple);
+}
+
 /* ── Log Console ───────────────────────────────────────── */
 
 .log-console {
