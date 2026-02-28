@@ -1,6 +1,18 @@
 /* ============================================================
    FMCSA Carrier Finder  |  Frontend Application Logic
+   ============================================================
+   Performance optimized:
+     - Paginated results table (only renders current page)
+     - Throttled UI updates (max once per 300ms)
+     - Log capped at 50 DOM entries
+     - Data kept in memory array, not in DOM
    ============================================================ */
+
+// ── Constants ─────────────────────────────────────────────
+
+const PAGE_SIZE = 25;          // rows visible per page
+const MAX_LOG_ENTRIES = 50;    // max log lines in DOM
+const UI_THROTTLE_MS = 300;    // min ms between DOM stat updates
 
 // ── State ─────────────────────────────────────────────────
 
@@ -14,9 +26,11 @@ const state = {
   checked: 0,
   found: 0,
   errors: 0,
-  results: [],
+  results: [],        // all found carriers (data only, never in DOM)
+  currentPage: 1,     // current table page
   startTime: null,
   abortController: null,
+  _lastUiUpdate: 0,   // timestamp of last DOM stat write
 };
 
 // ── DOM Refs ──────────────────────────────────────────────
@@ -77,21 +91,21 @@ function showToast(message, type = 'info', duration = 4000) {
   }, duration);
 }
 
-// ── Log ──────────────────────────────────────────────────
+// ── Log (capped at MAX_LOG_ENTRIES) ──────────────────────
 
 function log(message, type = 'info') {
   const entry = document.createElement('div');
   entry.className = `log-entry log-${type}`;
-
   const time = new Date().toLocaleTimeString();
   entry.textContent = `[${time}] ${message}`;
   dom.logConsole.appendChild(entry);
-  dom.logConsole.scrollTop = dom.logConsole.scrollHeight;
 
-  // Keep only last 200 entries
-  while (dom.logConsole.children.length > 200) {
+  // Trim to keep DOM light
+  while (dom.logConsole.children.length > MAX_LOG_ENTRIES) {
     dom.logConsole.removeChild(dom.logConsole.firstChild);
   }
+
+  dom.logConsole.scrollTop = dom.logConsole.scrollHeight;
 }
 
 // ── Connection Test ──────────────────────────────────────
@@ -133,7 +147,6 @@ async function quickCheck() {
   btn.disabled = true;
   btnText.textContent = 'Checking...';
   btnLoader.classList.remove('hidden');
-
   log(`Quick check: MC-${mcNumber}`, 'info');
 
   try {
@@ -182,7 +195,6 @@ function showQuickResult(result, mcNumber) {
 
   const d = result.data;
   const isMatch = result.found;
-
   el.classList.add(isMatch ? 'found' : 'not-found');
 
   el.innerHTML = `
@@ -201,7 +213,155 @@ function showQuickResult(result, mcNumber) {
   `;
 }
 
+// ══════════════════════════════════════════════════════════
+// ── Paginated Results Table ──────────────────────────────
+// ══════════════════════════════════════════════════════════
+
+function getTotalPages() {
+  return Math.max(1, Math.ceil(state.results.length / PAGE_SIZE));
+}
+
+/**
+ * Render exactly one page of rows.  Clears tbody first so the DOM
+ * never holds more than PAGE_SIZE <tr> elements.
+ */
+function renderResultsPage(page) {
+  const total = state.results.length;
+  if (total === 0) {
+    dom.resultsBody.innerHTML = '';
+    dom.emptyState.classList.remove('hidden');
+    updatePaginationControls();
+    return;
+  }
+
+  dom.emptyState.classList.add('hidden');
+
+  const totalPages = getTotalPages();
+  page = Math.max(1, Math.min(page, totalPages));
+  state.currentPage = page;
+
+  const startIdx = (page - 1) * PAGE_SIZE;
+  const endIdx = Math.min(startIdx + PAGE_SIZE, total);
+  const slice = state.results.slice(startIdx, endIdx);
+
+  // Build all rows in a DocumentFragment (single reflow)
+  const frag = document.createDocumentFragment();
+
+  for (let i = 0; i < slice.length; i++) {
+    const r = slice[i];
+    const d = r.data || {};
+    const rowNum = startIdx + i + 1;
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td>${rowNum}</td>` +
+      `<td style="font-weight:700;color:var(--cyan)">${d.mc_number || 'MC-' + r.mc}</td>` +
+      `<td style="font-weight:600;color:var(--text-1)">${d.legal_name || 'N/A'}</td>` +
+      `<td><span class="badge badge-cyan">${d.entity_type || 'N/A'}</span></td>` +
+      `<td><span class="badge badge-green">${d.usdot_status || 'N/A'}</span></td>` +
+      `<td style="font-size:0.78rem">${d.operating_authority_status || 'N/A'}</td>` +
+      `<td>${d.usdot_number || 'N/A'}</td>` +
+      `<td>${d.phone || 'N/A'}</td>` +
+      `<td style="font-size:0.78rem;max-width:200px">${d.physical_address || 'N/A'}</td>` +
+      `<td>${d.power_units || 'N/A'}</td>`;
+    frag.appendChild(tr);
+  }
+
+  dom.resultsBody.innerHTML = '';         // wipe old rows
+  dom.resultsBody.appendChild(frag);      // single paint
+
+  updatePaginationControls();
+}
+
+function updatePaginationControls() {
+  let pager = document.getElementById('paginationControls');
+  const totalPages = getTotalPages();
+  const total = state.results.length;
+
+  if (total === 0) {
+    if (pager) pager.classList.add('hidden');
+    return;
+  }
+
+  if (!pager) {
+    // Create the pagination bar once
+    pager = document.createElement('div');
+    pager.id = 'paginationControls';
+    pager.className = 'pagination';
+    const tableWrapper = dom.resultsBody.closest('.table-wrapper');
+    tableWrapper.parentNode.insertBefore(pager, tableWrapper.nextSibling);
+  }
+
+  pager.classList.remove('hidden');
+  pager.innerHTML = `
+    <button class="btn btn-outline btn-sm" onclick="goToPage(1)" ${state.currentPage <= 1 ? 'disabled' : ''}>First</button>
+    <button class="btn btn-outline btn-sm" onclick="goToPage(${state.currentPage - 1})" ${state.currentPage <= 1 ? 'disabled' : ''}>Prev</button>
+    <span class="pagination-info">Page ${state.currentPage} of ${totalPages} (${total.toLocaleString()} rows)</span>
+    <button class="btn btn-outline btn-sm" onclick="goToPage(${state.currentPage + 1})" ${state.currentPage >= totalPages ? 'disabled' : ''}>Next</button>
+    <button class="btn btn-outline btn-sm" onclick="goToPage(${totalPages})" ${state.currentPage >= totalPages ? 'disabled' : ''}>Last</button>
+  `;
+}
+
+function goToPage(page) {
+  renderResultsPage(page);
+}
+
+// ══════════════════════════════════════════════════════════
+// ── Throttled UI helpers ─────────────────────────────────
+// ══════════════════════════════════════════════════════════
+
+/** Write stats to the DOM at most once every UI_THROTTLE_MS */
+function throttledUiUpdate(force) {
+  const now = Date.now();
+  if (!force && now - state._lastUiUpdate < UI_THROTTLE_MS) return;
+  state._lastUiUpdate = now;
+
+  dom.statChecked.textContent = state.checked.toLocaleString();
+  dom.statFound.textContent = state.found.toLocaleString();
+  dom.statErrors.textContent = state.errors.toLocaleString();
+
+  const elapsed = (now - state.startTime) / 1000;
+  const speed = elapsed > 0 ? (state.checked / elapsed).toFixed(1) : 0;
+  dom.statSpeed.textContent = `${speed}/s`;
+
+  dom.resultsCount.textContent =
+    `${state.found} carrier${state.found !== 1 ? 's' : ''} found out of ${state.checked.toLocaleString()} checked`;
+}
+
+function updateProgress(current, start, end) {
+  const total = end - start + 1;
+  const done = Math.min(current - start, total);
+  const pct = Math.min((done / total) * 100, 100);
+
+  dom.progressFill.style.width = `${pct}%`;
+  dom.progressPct.textContent = `${pct.toFixed(1)}%`;
+  dom.progressRange.textContent = `MC-${start} to MC-${end}`;
+
+  const elapsed = (Date.now() - state.startTime) / 1000;
+  if (done > 0 && pct < 100) {
+    const remaining = (elapsed / done) * (total - done);
+    dom.progressEta.textContent = `ETA: ${formatTime(remaining)}`;
+    dom.progressLabel.textContent = `Scanning MC-${current}...`;
+  } else if (pct >= 100) {
+    dom.progressEta.textContent = `Done in ${formatTime(elapsed)}`;
+    dom.progressLabel.textContent = 'Scan Complete';
+  }
+}
+
+function formatTime(seconds) {
+  if (seconds < 60) return `${Math.ceil(seconds)}s`;
+  if (seconds < 3600) {
+    const m = Math.floor(seconds / 60);
+    const s = Math.ceil(seconds % 60);
+    return `${m}m ${s}s`;
+  }
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return `${h}h ${m}m`;
+}
+
+// ══════════════════════════════════════════════════════════
 // ── Batch Scan ───────────────────────────────────────────
+// ══════════════════════════════════════════════════════════
 
 async function startScan() {
   const startMC = parseInt(dom.startMc.value, 10);
@@ -229,7 +389,9 @@ async function startScan() {
   state.found = 0;
   state.errors = 0;
   state.results = [];
+  state.currentPage = 1;
   state.startTime = Date.now();
+  state._lastUiUpdate = 0;
   state.abortController = new AbortController();
 
   // Update UI
@@ -239,6 +401,7 @@ async function startScan() {
   dom.progressSection.classList.remove('hidden');
   dom.btnExportCsv.disabled = true;
   dom.btnExportExcel.disabled = true;
+  renderResultsPage(1);
 
   // Add scanning pulse to stats
   document.querySelectorAll('.stat-card').forEach((c) => c.classList.add('scanning-pulse'));
@@ -246,17 +409,18 @@ async function startScan() {
   const total = endMC - startMC + 1;
   log(`Starting scan: MC-${startMC} to MC-${endMC} (${total.toLocaleString()} numbers, batch size ${batchSize})`, 'info');
 
-  // Main scan loop
+  // ── Main scan loop ──
   let current = startMC;
+  let foundThisBatch = false;
 
   while (current <= endMC && state.scanning) {
-    // Handle pause
     if (state.paused) {
       await waitForResume();
       if (!state.scanning) break;
     }
 
     const count = Math.min(batchSize, endMC - current + 1);
+    foundThisBatch = false;
 
     try {
       const resp = await fetch(`/api/check-mc?start=${current}&count=${count}`, {
@@ -268,7 +432,7 @@ async function startScan() {
         state.errors += count;
         state.checked += count;
         current += count;
-        updateStats();
+        throttledUiUpdate(false);
         updateProgress(current, startMC, endMC);
         continue;
       }
@@ -281,20 +445,15 @@ async function startScan() {
 
           if (result.error) {
             state.errors++;
-            log(`MC-${result.mc}: Error: ${result.error}`, 'error');
+            // Only log errors occasionally to avoid DOM spam
+            if (state.errors <= 20 || state.errors % 50 === 0) {
+              log(`MC-${result.mc}: Error: ${result.error}`, 'error');
+            }
           } else if (result.found) {
             state.found++;
             state.results.push(result);
-            addResultRow(result);
+            foundThisBatch = true;
             log(`MC-${result.mc}: ACTIVE CARRIER "${result.data?.legal_name || 'Unknown'}"`, 'success');
-
-            // Flash effect
-            const foundCard = document.querySelector('.stat-card-found');
-            if (foundCard) {
-              foundCard.classList.remove('flash-found');
-              void foundCard.offsetWidth; // trigger reflow
-              foundCard.classList.add('flash-found');
-            }
           }
         }
       }
@@ -310,14 +469,40 @@ async function startScan() {
 
     current += count;
     state.currentMC = current;
-    updateStats();
+
+    // Throttled DOM writes
+    throttledUiUpdate(false);
     updateProgress(current, startMC, endMC);
+
+    // Only re-render the table page when a new carrier was found
+    // and the user is on the last page (auto-follow mode)
+    if (foundThisBatch) {
+      const totalPages = getTotalPages();
+      // Flash the found card
+      const foundCard = document.querySelector('.stat-card-found');
+      if (foundCard) {
+        foundCard.classList.remove('flash-found');
+        void foundCard.offsetWidth;
+        foundCard.classList.add('flash-found');
+      }
+      // Auto-follow: if user is viewing the last page, re-render it
+      if (state.currentPage >= totalPages - 1) {
+        renderResultsPage(totalPages);
+      } else {
+        // Just update pagination info without re-rendering rows
+        updatePaginationControls();
+      }
+    }
   }
 
-  // Scan complete
+  // ── Scan complete ──
   state.scanning = false;
   updateControls(false);
   document.querySelectorAll('.stat-card').forEach((c) => c.classList.remove('scanning-pulse'));
+
+  // Final forced UI update
+  throttledUiUpdate(true);
+  renderResultsPage(state.currentPage);
 
   const elapsed = ((Date.now() - state.startTime) / 1000).toFixed(1);
   log(`Scan complete! Checked ${state.checked.toLocaleString()}, found ${state.found} carriers, ${state.errors} errors in ${elapsed}s`, 'info');
@@ -373,7 +558,7 @@ function stopScan() {
   showToast('Scan stopped.', 'info');
 }
 
-// ── UI Updates ───────────────────────────────────────────
+// ── UI Controls ──────────────────────────────────────────
 
 function updateControls(scanning) {
   dom.btnStart.disabled = scanning;
@@ -393,78 +578,6 @@ function updateControls(scanning) {
   }
 }
 
-function updateStats() {
-  dom.statChecked.textContent = state.checked.toLocaleString();
-  dom.statFound.textContent = state.found.toLocaleString();
-  dom.statErrors.textContent = state.errors.toLocaleString();
-
-  const elapsed = (Date.now() - state.startTime) / 1000;
-  const speed = elapsed > 0 ? (state.checked / elapsed).toFixed(1) : 0;
-  dom.statSpeed.textContent = `${speed}/s`;
-
-  dom.resultsCount.textContent = `${state.found} carrier${state.found !== 1 ? 's' : ''} found out of ${state.checked.toLocaleString()} checked`;
-}
-
-function updateProgress(current, start, end) {
-  const total = end - start + 1;
-  const done = Math.min(current - start, total);
-  const pct = Math.min((done / total) * 100, 100);
-
-  dom.progressFill.style.width = `${pct}%`;
-  dom.progressPct.textContent = `${pct.toFixed(1)}%`;
-  dom.progressRange.textContent = `MC-${start} to MC-${end}`;
-
-  const elapsed = (Date.now() - state.startTime) / 1000;
-  if (done > 0 && pct < 100) {
-    const remaining = (elapsed / done) * (total - done);
-    dom.progressEta.textContent = `ETA: ${formatTime(remaining)}`;
-    dom.progressLabel.textContent = `Scanning MC-${current}...`;
-  } else if (pct >= 100) {
-    dom.progressEta.textContent = `Done in ${formatTime(elapsed)}`;
-    dom.progressLabel.textContent = 'Scan Complete';
-  }
-}
-
-function formatTime(seconds) {
-  if (seconds < 60) return `${Math.ceil(seconds)}s`;
-  if (seconds < 3600) {
-    const m = Math.floor(seconds / 60);
-    const s = Math.ceil(seconds % 60);
-    return `${m}m ${s}s`;
-  }
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  return `${h}h ${m}m`;
-}
-
-function addResultRow(result) {
-  const d = result.data || {};
-  const tbody = dom.resultsBody;
-  const rowNum = tbody.children.length + 1;
-
-  const tr = document.createElement('tr');
-  tr.innerHTML = `
-    <td>${rowNum}</td>
-    <td style="font-weight:700;color:var(--cyan)">${d.mc_number || 'MC-' + result.mc}</td>
-    <td style="font-weight:600;color:var(--text-1)">${d.legal_name || 'N/A'}</td>
-    <td><span class="badge badge-cyan">${d.entity_type || 'N/A'}</span></td>
-    <td><span class="badge badge-green">${d.usdot_status || 'N/A'}</span></td>
-    <td style="font-size:0.78rem">${d.operating_authority_status || 'N/A'}</td>
-    <td>${d.usdot_number || 'N/A'}</td>
-    <td>${d.phone || 'N/A'}</td>
-    <td style="font-size:0.78rem;max-width:200px">${d.physical_address || 'N/A'}</td>
-    <td>${d.power_units || 'N/A'}</td>
-  `;
-  tbody.appendChild(tr);
-  dom.emptyState.classList.add('hidden');
-
-  // Keep table scrolled to bottom for visibility
-  const wrapper = tbody.closest('.table-wrapper');
-  if (wrapper) {
-    wrapper.scrollTop = wrapper.scrollHeight;
-  }
-}
-
 // ── Export Functions ──────────────────────────────────────
 
 function exportCSV() {
@@ -474,44 +587,24 @@ function exportCSV() {
   }
 
   const headers = [
-    'MC Number',
-    'Entity Type',
-    'USDOT Status',
-    'USDOT Number',
-    'Operating Authority Status',
-    'Legal Name',
-    'DBA Name',
-    'Physical Address',
-    'Phone',
-    'Mailing Address',
-    'Power Units',
-    'Out of Service Date',
-    'MCS 150 Mileage',
-    'MCS 150 Form Date',
+    'MC Number', 'Entity Type', 'USDOT Status', 'USDOT Number',
+    'Operating Authority Status', 'Legal Name', 'DBA Name',
+    'Physical Address', 'Phone', 'Mailing Address', 'Power Units',
+    'Out of Service Date', 'MCS 150 Mileage', 'MCS 150 Form Date',
   ];
 
   const rows = state.results.map((r) => {
     const d = r.data || {};
     return [
-      d.mc_number || 'MC-' + r.mc,
-      d.entity_type || '',
-      d.usdot_status || '',
-      d.usdot_number || '',
-      d.operating_authority_status || '',
-      d.legal_name || '',
-      d.dba_name || '',
-      d.physical_address || '',
-      d.phone || '',
-      d.mailing_address || '',
-      d.power_units || '',
-      d.out_of_service_date || '',
-      d.mcs150_mileage || '',
-      d.mcs150_form_date || '',
+      d.mc_number || 'MC-' + r.mc, d.entity_type || '', d.usdot_status || '',
+      d.usdot_number || '', d.operating_authority_status || '', d.legal_name || '',
+      d.dba_name || '', d.physical_address || '', d.phone || '',
+      d.mailing_address || '', d.power_units || '', d.out_of_service_date || '',
+      d.mcs150_mileage || '', d.mcs150_form_date || '',
     ].map((val) => `"${String(val).replace(/"/g, '""')}"`);
   });
 
   const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-
   downloadFile(csv, 'authorized_carriers.csv', 'text/csv');
   showToast(`Exported ${state.results.length} carriers to CSV`, 'success');
   log(`Exported ${state.results.length} carriers to CSV`, 'info');
@@ -529,20 +622,10 @@ function exportExcel() {
   }
 
   const headers = [
-    'MC Number',
-    'Entity Type',
-    'USDOT Status',
-    'USDOT Number',
-    'Operating Authority',
-    'Legal Name',
-    'DBA Name',
-    'Physical Address',
-    'Phone',
-    'Mailing Address',
-    'Power Units',
-    'Out of Service Date',
-    'MCS 150 Mileage',
-    'MCS 150 Form Date',
+    'MC Number', 'Entity Type', 'USDOT Status', 'USDOT Number',
+    'Operating Authority', 'Legal Name', 'DBA Name', 'Physical Address',
+    'Phone', 'Mailing Address', 'Power Units', 'Out of Service Date',
+    'MCS 150 Mileage', 'MCS 150 Form Date',
   ];
 
   const data = state.results.map((r) => {
@@ -567,13 +650,9 @@ function exportExcel() {
 
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.json_to_sheet(data, { header: headers });
-
-  // Set column widths
   ws['!cols'] = headers.map((h) => ({ wch: Math.max(h.length + 2, 15) }));
-
   XLSX.utils.book_append_sheet(wb, ws, 'Authorized Carriers');
 
-  // Summary sheet
   const summaryData = [
     { Field: 'Report', Value: 'FMCSA MC Number Scan' },
     { Field: 'Generated', Value: new Date().toLocaleString() },
@@ -607,7 +686,6 @@ function downloadFile(content, filename, mimeType) {
 // ── Keyboard Shortcuts ───────────────────────────────────
 
 document.addEventListener('keydown', (e) => {
-  // Enter on quick check input
   if (e.key === 'Enter' && document.activeElement === dom.quickInput) {
     quickCheck();
   }

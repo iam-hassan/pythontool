@@ -883,6 +883,28 @@ body {
   text-decoration: underline;
 }
 
+/* ── Pagination ────────────────────────────────────────── */
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1rem 0 0.2rem;
+}
+
+.pagination-info {
+  font-size: 0.82rem;
+  color: var(--text-3);
+  padding: 0 0.6rem;
+  white-space: nowrap;
+}
+
+.btn-sm {
+  padding: 0.4rem 0.9rem;
+  font-size: 0.78rem;
+}
+
 /* ── Utility ───────────────────────────────────────────── */
 
 .hidden {
