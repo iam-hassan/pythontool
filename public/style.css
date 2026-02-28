@@ -642,22 +642,9 @@ body {
   gap: 1rem;
 }
 
-.results-actions {
+.export-buttons {
   display: flex;
-  align-items: center;
   gap: 0.5rem;
-}
-
-.results-collapsible {
-  max-height: 2000px;
-  overflow: hidden;
-  transition: max-height 0.4s ease, opacity 0.3s ease;
-  opacity: 1;
-}
-
-.results-collapsible.collapsed {
-  max-height: 0;
-  opacity: 0;
 }
 
 .table-wrapper {

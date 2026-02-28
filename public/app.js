@@ -51,6 +51,7 @@ const dom = {
   statChecked: $('statChecked'),
   statFound: $('statFound'),
   statErrors: $('statErrors'),
+
   progressSection: $('progressSection'),
   progressFill: $('progressFill'),
   progressPct: $('progressPct'),
@@ -328,19 +329,6 @@ function updatePaginationControls() {
 
 function goToPage(page) {
   renderResultsPage(page);
-}
-
-function toggleResultsPanel() {
-  const panel = document.getElementById('resultsCollapsible');
-  const btn = document.getElementById('btnToggleResults');
-  if (!panel || !btn) return;
-
-  const isCollapsed = panel.classList.contains('collapsed');
-  panel.classList.toggle('collapsed');
-
-  btn.innerHTML = isCollapsed
-    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 15 12 9 18 15"/></svg> Hide Results'
-    : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg> Show Results';
 }
 
 // ══════════════════════════════════════════════════════════
