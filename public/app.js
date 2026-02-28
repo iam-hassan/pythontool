@@ -51,7 +51,6 @@ const dom = {
   statChecked: $('statChecked'),
   statFound: $('statFound'),
   statErrors: $('statErrors'),
-  statSpeed: $('statSpeed'),
   progressSection: $('progressSection'),
   progressFill: $('progressFill'),
   progressPct: $('progressPct'),
@@ -331,6 +330,19 @@ function goToPage(page) {
   renderResultsPage(page);
 }
 
+function toggleResultsPanel() {
+  const panel = document.getElementById('resultsCollapsible');
+  const btn = document.getElementById('btnToggleResults');
+  if (!panel || !btn) return;
+
+  const isCollapsed = panel.classList.contains('collapsed');
+  panel.classList.toggle('collapsed');
+
+  btn.innerHTML = isCollapsed
+    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 15 12 9 18 15"/></svg> Hide Results'
+    : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg> Show Results';
+}
+
 // ══════════════════════════════════════════════════════════
 // ── Throttled UI helpers ─────────────────────────────────
 // ══════════════════════════════════════════════════════════
@@ -344,10 +356,6 @@ function throttledUiUpdate(force) {
   dom.statChecked.textContent = state.checked.toLocaleString();
   dom.statFound.textContent = state.found.toLocaleString();
   dom.statErrors.textContent = state.errors.toLocaleString();
-
-  const elapsed = (now - state.startTime) / 1000;
-  const speed = elapsed > 0 ? (state.checked / elapsed).toFixed(1) : 0;
-  dom.statSpeed.textContent = `${speed}/s`;
 
   dom.resultsCount.textContent =
     `${state.found} carrier${state.found !== 1 ? 's' : ''} found out of ${state.checked.toLocaleString()} checked`;

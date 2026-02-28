@@ -485,7 +485,7 @@ body {
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 1rem;
 }
 
@@ -642,9 +642,22 @@ body {
   gap: 1rem;
 }
 
-.export-buttons {
+.results-actions {
   display: flex;
+  align-items: center;
   gap: 0.5rem;
+}
+
+.results-collapsible {
+  max-height: 2000px;
+  overflow: hidden;
+  transition: max-height 0.4s ease, opacity 0.3s ease;
+  opacity: 1;
+}
+
+.results-collapsible.collapsed {
+  max-height: 0;
+  opacity: 0;
 }
 
 .table-wrapper {
