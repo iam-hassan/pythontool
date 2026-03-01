@@ -282,13 +282,10 @@ function renderResultsPage(page) {
       `<td>${rowNum}</td>` +
       `<td style="font-weight:700;color:var(--cyan)">${d.mc_number || 'MC-' + r.mc}</td>` +
       `<td style="font-weight:600;color:var(--text-1)">${d.legal_name || 'N/A'}</td>` +
-      `<td><span class="badge badge-cyan">${d.entity_type || 'N/A'}</span></td>` +
-      `<td><span class="badge badge-green">${d.usdot_status || 'N/A'}</span></td>` +
-      `<td>${clampCell(d.operating_authority_status || 'N/A')}</td>` +
       `<td>${d.usdot_number || 'N/A'}</td>` +
+      `<td>${clampCell(d.operating_authority_status || 'N/A')}</td>` +
       `<td>${d.phone || 'N/A'}</td>` +
-      `<td>${clampCell(d.physical_address || 'N/A')}</td>` +
-      `<td>${d.power_units || 'N/A'}</td>`;
+      `<td>${clampCell(d.physical_address || 'N/A')}</td>`;
     frag.appendChild(tr);
   }
 
@@ -602,20 +599,16 @@ function exportCSV() {
   }
 
   const headers = [
-    'MC Number', 'Entity Type', 'USDOT Status', 'USDOT Number',
-    'Operating Authority Status', 'Legal Name', 'DBA Name',
-    'Physical Address', 'Phone', 'Mailing Address', 'Power Units',
-    'Out of Service Date', 'MCS 150 Mileage', 'MCS 150 Form Date',
+    'MC Number', 'Legal Name', 'USDOT Number', 'Authority',
+    'Phone', 'Address',
   ];
 
   const rows = state.results.map((r) => {
     const d = r.data || {};
     return [
-      d.mc_number || 'MC-' + r.mc, d.entity_type || '', d.usdot_status || '',
-      d.usdot_number || '', d.operating_authority_status || '', d.legal_name || '',
-      d.dba_name || '', d.physical_address || '', d.phone || '',
-      d.mailing_address || '', d.power_units || '', d.out_of_service_date || '',
-      d.mcs150_mileage || '', d.mcs150_form_date || '',
+      d.mc_number || 'MC-' + r.mc, d.legal_name || '',
+      d.usdot_number || '', d.operating_authority_status || '',
+      d.phone || '', d.physical_address || '',
     ].map((val) => `"${String(val).replace(/"/g, '""')}"`);
   });
 
@@ -637,29 +630,19 @@ function exportExcel() {
   }
 
   const headers = [
-    'MC Number', 'Entity Type', 'USDOT Status', 'USDOT Number',
-    'Operating Authority', 'Legal Name', 'DBA Name', 'Physical Address',
-    'Phone', 'Mailing Address', 'Power Units', 'Out of Service Date',
-    'MCS 150 Mileage', 'MCS 150 Form Date',
+    'MC Number', 'Legal Name', 'USDOT Number', 'Authority',
+    'Phone', 'Address',
   ];
 
   const data = state.results.map((r) => {
     const d = r.data || {};
     return {
       'MC Number': d.mc_number || 'MC-' + r.mc,
-      'Entity Type': d.entity_type || '',
-      'USDOT Status': d.usdot_status || '',
-      'USDOT Number': d.usdot_number || '',
-      'Operating Authority': d.operating_authority_status || '',
       'Legal Name': d.legal_name || '',
-      'DBA Name': d.dba_name || '',
-      'Physical Address': d.physical_address || '',
+      'USDOT Number': d.usdot_number || '',
+      'Authority': d.operating_authority_status || '',
       'Phone': d.phone || '',
-      'Mailing Address': d.mailing_address || '',
-      'Power Units': d.power_units || '',
-      'Out of Service Date': d.out_of_service_date || '',
-      'MCS 150 Mileage': d.mcs150_mileage || '',
-      'MCS 150 Form Date': d.mcs150_form_date || '',
+      'Address': d.physical_address || '',
     };
   });
 
@@ -675,7 +658,7 @@ function exportExcel() {
     { Field: 'Total Checked', Value: state.checked },
     { Field: 'Carriers Found', Value: state.found },
     { Field: 'Errors', Value: state.errors },
-    { Field: 'Criteria', Value: 'Entity Type = CARRIER, Status = ACTIVE' },
+    { Field: 'Criteria', Value: 'CARRIER + ACTIVE + AUTHORIZED' },
   ];
   const wsSummary = XLSX.utils.json_to_sheet(summaryData);
   wsSummary['!cols'] = [{ wch: 20 }, { wch: 45 }];

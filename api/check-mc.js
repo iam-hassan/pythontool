@@ -125,15 +125,20 @@ function parseSnapshot(mcNumber, html) {
     data.mc_number = "MC-" + mcNumber;
   }
 
-  const isCarrier = data.entity_type.toUpperCase().includes("CARRIER");
-  const isActive = data.usdot_status.toUpperCase().includes("ACTIVE")
-    && !data.usdot_status.toUpperCase().includes("INACTIVE");
+  const entityUpper = data.entity_type.toUpperCase();
+  const statusUpper = data.usdot_status.toUpperCase();
+  const authorityUpper = data.operating_authority_status.toUpperCase();
+
+  const isCarrier = entityUpper.includes("CARRIER");
+  const isActive = statusUpper.includes("ACTIVE") && !statusUpper.includes("INACTIVE");
+  const isAuthorized = authorityUpper.includes("AUTHORIZED") && !authorityUpper.startsWith("NOT");
 
   return {
     mc: mcNumber,
-    found: isCarrier && isActive,
+    found: isCarrier && isActive && isAuthorized,
     isCarrier,
     isActive,
+    isAuthorized,
     data,
   };
 }
