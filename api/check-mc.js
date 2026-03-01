@@ -3,85 +3,131 @@ const cheerio = require("cheerio");
 const FMCSA_URL = "https://safer.fmcsa.dot.gov/query.asp";
 
 const USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36";
 
-// ── Parse a single FMCSA snapshot page ──
+// ============================================================
+// Robust FMCSA SAFER HTML parser
+// ============================================================
+// The FMCSA snapshot page uses deeply nested tables. Labels like
+// "Entity Type:" appear in BOTH the explanatory header AND the
+// actual data rows. To avoid grabbing the wrong one, we use a
+// two phase approach:
+//   1. Find the real data section (the table containing
+//      "USDOT INFORMATION" header).
+//   2. Walk <tr> rows in that section, matching label <td>
+//      to value <td> pairs.
+// ============================================================
 
 function parseSnapshot(mcNumber, html) {
   const $ = cheerio.load(html);
   const bodyText = $("body").text().toLowerCase();
 
-  // No record indicators
+  // Check for no record / invalid
   const noRecord = [
     "no record",
-    "no active",
     "could not find",
     "invalid",
-    "no carrier",
     "record not found",
     "no match",
+    "error processing",
   ];
 
   if (noRecord.some((p) => bodyText.includes(p))) {
     return { mc: mcNumber, found: false, data: null };
   }
 
-  // Helper to extract a field value by its label text
-  function findField(label) {
-    let value = "";
-    const labelLower = label.toLowerCase();
+  // ── Strategy: find all <tr> rows that have exactly a label
+  //    cell and a value cell, build a key/value map from their
+  //    text content. The real data rows have bold (<b> or <a>)
+  //    labels like "Entity Type:" followed by the value.
+  // ──
 
-    $("th, td, font, b").each((_i, el) => {
-      const cellText = $(el).text().trim().replace(/\s+/g, " ");
-      if (cellText.toLowerCase().includes(labelLower)) {
-        // Try next sibling td
-        const next = $(el).next("td");
-        if (next.length) {
-          value = next.text().trim().replace(/\s+/g, " ");
-          return false; // break
-        }
-        // Try parent row
-        const row = $(el).closest("tr");
-        if (row.length) {
-          const cells = row.find("td");
-          cells.each((ci, c) => {
-            const ct = $(c).text().trim().replace(/\s+/g, " ");
-            if (ct.toLowerCase().includes(labelLower)) {
-              const nextCell = cells.eq(ci + 1);
-              if (nextCell.length) {
-                value = nextCell.text().trim().replace(/\s+/g, " ");
-                return false;
-              }
-            }
-          });
-          if (value) return false;
+  const fieldMap = {};
+
+  $("tr").each((_i, row) => {
+    const cells = $(row).children("td");
+    if (cells.length < 2) return;
+
+    // Walk cells in pairs: cell N = label, cell N+1 = value
+    for (let c = 0; c < cells.length - 1; c++) {
+      const labelCell = cells.eq(c);
+      let labelText = "";
+
+      // The label is usually inside a <b>, <a>, or <th> tag
+      const bold = labelCell.find("b, a, th").first();
+      if (bold.length) {
+        labelText = bold.text().trim().replace(/\s+/g, " ");
+      } else {
+        labelText = labelCell.text().trim().replace(/\s+/g, " ");
+      }
+
+      // Must end with ":" or contain specific known label patterns
+      if (!labelText || !labelText.includes(":")) continue;
+
+      // Skip very long strings (explanatory paragraphs, not labels)
+      if (labelText.length > 60) continue;
+
+      const valueCell = cells.eq(c + 1);
+      const valueText = valueCell.text().trim().replace(/\s+/g, " ");
+
+      // Normalize label for our map key
+      const key = labelText.replace(/:$/, "").trim();
+
+      // Only store if we dont already have it (first occurrence wins,
+      // which is the data section before the explanation sections)
+      if (!fieldMap[key] && valueText && valueText.length < 500) {
+        fieldMap[key] = valueText;
+      }
+
+      c++; // skip the value cell on next iteration
+    }
+  });
+
+  // ── Map extracted fields to our structured output ──
+
+  function getField(...possibleKeys) {
+    for (const k of possibleKeys) {
+      const kLower = k.toLowerCase();
+      for (const [mapKey, mapVal] of Object.entries(fieldMap)) {
+        if (mapKey.toLowerCase().includes(kLower)) {
+          return mapVal;
         }
       }
-    });
-
-    return value;
+    }
+    return "";
   }
 
   const data = {
-    entity_type: findField("Entity Type:"),
-    usdot_status: findField("USDOT Status:"),
-    usdot_number: findField("USDOT Number:"),
-    out_of_service_date: findField("Out of Service Date:"),
-    operating_authority_status: findField("Operating Authority Status:"),
-    mc_number: findField("MC/MX/FF Number"),
-    legal_name: findField("Legal Name:"),
-    dba_name: findField("DBA Name:"),
-    physical_address: findField("Physical Address:"),
-    phone: findField("Phone:"),
-    mailing_address: findField("Mailing Address:"),
-    power_units: findField("Power Units:"),
-    mcs150_mileage: findField("MCS-150 Mileage"),
-    mcs150_form_date: findField("MCS-150 Form Date:"),
-    state_carrier_id: findField("State Carrier ID Number:"),
+    entity_type: getField("Entity Type"),
+    usdot_status: getField("USDOT Status"),
+    usdot_number: getField("USDOT Number"),
+    out_of_service_date: getField("Out of Service Date"),
+    operating_authority_status: getField("Operating Authority Status"),
+    mc_number: getField("MC/MX/FF Number"),
+    legal_name: getField("Legal Name"),
+    dba_name: getField("DBA Name"),
+    physical_address: getField("Physical Address"),
+    phone: getField("Phone"),
+    mailing_address: getField("Mailing Address"),
+    power_units: getField("Power Units"),
+    mcs150_mileage: getField("MCS-150 Mileage"),
+    mcs150_form_date: getField("MCS-150 Form Date"),
+    state_carrier_id: getField("State Carrier ID"),
   };
 
+  // If none of the critical fields found, try regex fallback
+  if (!data.entity_type && !data.legal_name) {
+    applyRegexFallback($, data, mcNumber);
+  }
+
+  // Set MC number if not found from page
+  if (!data.mc_number) {
+    data.mc_number = "MC-" + mcNumber;
+  }
+
   const isCarrier = data.entity_type.toUpperCase().includes("CARRIER");
-  const isActive = data.usdot_status.toUpperCase().includes("ACTIVE");
+  const isActive = data.usdot_status.toUpperCase().includes("ACTIVE")
+    && !data.usdot_status.toUpperCase().includes("INACTIVE");
 
   return {
     mc: mcNumber,
@@ -90,6 +136,42 @@ function parseSnapshot(mcNumber, html) {
     isActive,
     data,
   };
+}
+
+// ── Regex fallback for difficult pages ──
+
+function applyRegexFallback($, data, mcNumber) {
+  const text = $("body").text().replace(/\s+/g, " ");
+
+  const patterns = {
+    entity_type: /Entity Type:\s*(CARRIER|BROKER)/i,
+    usdot_status: /USDOT Status:\s*(ACTIVE|INACTIVE|OUT[- ]OF[- ]SERVICE)/i,
+    usdot_number: /USDOT Number:\s*(\d+)/i,
+    out_of_service_date: /Out of Service Date:\s*([A-Za-z0-9/\- ]+?)(?=\s+USDOT|\s+State)/i,
+    operating_authority_status: /Operating Authority Status:\s*((?:AUTHORIZED|NOT AUTHORIZED|OUT[- ]OF[- ]SERVICE)[^\n]*?)(?=\s+(?:\*Please|For Licensing))/i,
+    mc_number: /MC\/MX\/FF Number\(s\):\s*(MC-\d+)/i,
+    legal_name: /Legal Name:\s*([A-Z0-9 .,'&()/-]+?)(?=\s+DBA Name)/i,
+    dba_name: /DBA Name:\s*([A-Z0-9 .,'&()/-]*?)(?=\s+Physical Address)/i,
+    physical_address: /Physical Address:\s*(.+?)(?=\s+Phone:)/i,
+    phone: /Phone:\s*\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/i,
+    mailing_address: /Mailing Address:\s*(.+?)(?=\s+DUNS Number)/i,
+    power_units: /Power Units:\s*(\d+)/i,
+    mcs150_form_date: /MCS-150 Form Date:\s*([\d/]+)/i,
+    mcs150_mileage: /MCS-150 Mileage \(Year\):\s*([^\s]+(?:\s+\(\d{4}\))?)/i,
+  };
+
+  for (const [key, regex] of Object.entries(patterns)) {
+    if (!data[key]) {
+      const match = text.match(regex);
+      if (match) {
+        data[key] = match[key === "phone" ? 0 : 1].trim();
+        // Remove the "Phone:" prefix if present
+        if (key === "phone") {
+          data[key] = data[key].replace(/^Phone:\s*/, "");
+        }
+      }
+    }
+  }
 }
 
 // ── Query FMCSA for a single MC number ──
@@ -113,8 +195,9 @@ async function checkSingleMC(mcNumber) {
         "User-Agent": USER_AGENT,
         Accept:
           "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        Referer: "https://safer.fmcsa.dot.gov/CompanySnapshot.aspx",
+        "Accept-Language": "en-US,en;q=0.9",
+        Referer: "https://safer.fmcsa.dot.gov/",
+        Origin: "https://safer.fmcsa.dot.gov",
       },
       body: params.toString(),
       signal: controller.signal,
