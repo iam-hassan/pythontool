@@ -283,6 +283,7 @@ function renderResultsPage(page) {
       `<td style="font-weight:700;color:var(--cyan)">${d.mc_number || 'MC-' + r.mc}</td>` +
       `<td style="font-weight:600;color:var(--text-1)">${d.legal_name || 'N/A'}</td>` +
       `<td>${d.usdot_number || 'N/A'}</td>` +
+      `<td><span class="badge badge-green">ACTIVE</span></td>` +
       `<td>${clampCell(d.operating_authority_status || 'N/A')}</td>` +
       `<td>${d.phone || 'N/A'}</td>` +
       `<td>${clampCell(d.physical_address || 'N/A')}</td>`;
@@ -599,7 +600,7 @@ function exportCSV() {
   }
 
   const headers = [
-    'MC Number', 'Legal Name', 'USDOT Number', 'Authority',
+    'MC Number', 'Legal Name', 'USDOT Number', 'USDOT Status', 'Authority',
     'Phone', 'Address',
   ];
 
@@ -607,7 +608,7 @@ function exportCSV() {
     const d = r.data || {};
     return [
       d.mc_number || 'MC-' + r.mc, d.legal_name || '',
-      d.usdot_number || '', d.operating_authority_status || '',
+      d.usdot_number || '', 'ACTIVE', d.operating_authority_status || '',
       d.phone || '', d.physical_address || '',
     ].map((val) => `"${String(val).replace(/"/g, '""')}"`);
   });
@@ -630,7 +631,7 @@ function exportExcel() {
   }
 
   const headers = [
-    'MC Number', 'Legal Name', 'USDOT Number', 'Authority',
+    'MC Number', 'Legal Name', 'USDOT Number', 'USDOT Status', 'Authority',
     'Phone', 'Address',
   ];
 
@@ -640,6 +641,7 @@ function exportExcel() {
       'MC Number': d.mc_number || 'MC-' + r.mc,
       'Legal Name': d.legal_name || '',
       'USDOT Number': d.usdot_number || '',
+      'USDOT Status': 'ACTIVE',
       'Authority': d.operating_authority_status || '',
       'Phone': d.phone || '',
       'Address': d.physical_address || '',
