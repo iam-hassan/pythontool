@@ -276,7 +276,7 @@ module.exports = async function handler(req, res) {
     mcNumbers = [parseInt(mc, 10)];
   } else if (start) {
     const s = parseInt(start, 10);
-    const c = Math.min(Math.max(parseInt(count, 10) || 1, 1), 10);
+    const c = Math.min(Math.max(parseInt(count, 10) || 1, 1), 100);
     mcNumbers = Array.from({ length: c }, (_, i) => s + i);
   } else {
     return res.status(400).json({

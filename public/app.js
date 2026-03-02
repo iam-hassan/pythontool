@@ -386,7 +386,7 @@ function formatTime(seconds) {
 async function startScan() {
   const startMC = parseInt(dom.startMc.value, 10);
   const endMC = parseInt(dom.endMc.value, 10);
-  const batchSize = Math.min(Math.max(parseInt(dom.batchSize.value, 10) || 5, 1), 10);
+  const batchSize = Math.min(Math.max(parseInt(dom.batchSize.value, 10) || 5, 1), 100);
 
   if (!startMC || !endMC || startMC < 1 || endMC < startMC) {
     showToast('Please enter a valid MC number range (End must be >= Start)', 'error');
