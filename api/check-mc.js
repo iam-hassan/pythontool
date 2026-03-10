@@ -181,7 +181,7 @@ function applyRegexFallback($, data, mcNumber) {
 
 // ── Query FMCSA for a single MC number ──
 
-async function checkSingleMC(mcNumber) {
+async function checkSingleMC(mcNumber, attempt = 1) {
   const params = new URLSearchParams({
     searchtype: "ANY",
     query_type: "queryCarrierSnapshot",
@@ -211,6 +211,11 @@ async function checkSingleMC(mcNumber) {
     clearTimeout(timeout);
 
     if (!response.ok) {
+      // On 403 back off and retry — up to 2 extra attempts
+      if (response.status === 403 && attempt < 3) {
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+        return checkSingleMC(mcNumber, attempt + 1);
+      }
       return { mc: mcNumber, found: false, error: `HTTP ${response.status}` };
     }
 

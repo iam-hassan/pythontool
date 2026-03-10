@@ -427,90 +427,105 @@ async function startScan() {
   document.querySelectorAll('.stat-card').forEach((c) => c.classList.add('scanning-pulse'));
 
   const total = endMC - startMC + 1;
-  log(`Starting scan: MC-${startMC} to MC-${endMC} (${total.toLocaleString()} numbers, batch size ${batchSize})`, 'info');
 
-  // ── Main scan loop ──
-  let current = startMC;
-  let foundThisBatch = false;
+  // Use batchSize input as the concurrency window (capped at 8 to stay safe)
+  const CONCURRENCY = Math.min(Math.max(batchSize, 1), 8);
+  // 170 ms between launches = max ~5.9 req/s — well under FMCSA rate limit
+  const MIN_LAUNCH_GAP_MS = 170;
 
-  while (current <= endMC && state.scanning) {
-    if (state.paused) {
-      await waitForResume();
-      if (!state.scanning) break;
+  log(`Starting scan: MC-${startMC} to MC-${endMC} (${total.toLocaleString()} numbers, ${CONCURRENCY} concurrent)`, 'info');
+
+  // ── Sliding-window scan ──────────────────────────────────────────────
+  // Keeps CONCURRENCY requests in-flight at all times. A 170 ms minimum
+  // gap between launches caps the rate to ~5.9 req/s so FMCSA never sees
+  // a burst. Throughput: ~5-6 MC/s → ~2.5-3 min per 1,000 numbers.
+  // ────────────────────────────────────────────────────────────────────
+
+  const mcQueue = [];
+  for (let mc = startMC; mc <= endMC; mc++) mcQueue.push(mc);
+
+  let inFlight = 0;
+  let lastLaunchTime = 0;
+
+  await new Promise((resolveScan) => {
+    function checkDone() {
+      if (mcQueue.length === 0 && inFlight === 0) resolveScan();
     }
 
-    const count = Math.min(batchSize, endMC - current + 1);
-    foundThisBatch = false;
-
-    try {
-      const resp = await fetch(`/api/check-mc?start=${current}&count=${count}`, {
-        signal: state.abortController.signal,
-      });
-
-      if (!resp.ok) {
-        log(`API error: HTTP ${resp.status} for MC-${current} to MC-${current + count - 1}`, 'error');
-        state.errors += count;
-        state.checked += count;
-        current += count;
-        throttledUiUpdate(false);
-        updateProgress(current, startMC, endMC);
-        continue;
-      }
-
-      const data = await resp.json();
-
-      if (data.results) {
-        for (const result of data.results) {
-          state.checked++;
-
-          if (result.error) {
-            state.errors++;
-            // Only log errors occasionally to avoid DOM spam
-            if (state.errors <= 20 || state.errors % 50 === 0) {
-              log(`MC-${result.mc}: Error: ${result.error}`, 'error');
-            }
-          } else if (result.found) {
-            state.found++;
-            state.results.push(result);
-            foundThisBatch = true;
-            log(`MC-${result.mc}: ACTIVE CARRIER "${result.data?.legal_name || 'Unknown'}"`, 'success');
-          }
+    function processResult(result) {
+      state.checked++;
+      if (result.error) {
+        state.errors++;
+        if (state.errors <= 20 || state.errors % 50 === 0) {
+          log(`MC-${result.mc}: Error: ${result.error}`, 'error');
         }
+      } else if (result.found) {
+        state.found++;
+        state.results.push(result);
+        log(`MC-${result.mc}: ACTIVE CARRIER "${result.data?.legal_name || 'Unknown'}"`, 'success');
+        const foundCard = document.querySelector('.stat-card-found');
+        if (foundCard) {
+          foundCard.classList.remove('flash-found');
+          void foundCard.offsetWidth;
+          foundCard.classList.add('flash-found');
+        }
+        renderResultsPage(state.currentPage);
       }
-    } catch (err) {
-      if (err.name === 'AbortError') {
-        log('Scan aborted by user', 'warn');
-        break;
-      }
-      state.errors += count;
-      state.checked += count;
-      log(`Network error at MC-${current}: ${err.message}`, 'error');
+      throttledUiUpdate(false);
+      updateProgress(startMC + state.checked, startMC, endMC);
     }
 
-    current += count;
-    state.currentMC = current;
+    async function launchOne() {
+      if (!state.scanning) { checkDone(); return; }
+      if (state.paused)    { setTimeout(launchOne, 200); return; }
+      if (inFlight >= CONCURRENCY || mcQueue.length === 0) return;
 
-    // Throttled DOM writes
-    throttledUiUpdate(false);
-    updateProgress(current, startMC, endMC);
-
-    // No extra inter-batch delay needed — the staggered launches inside
-    // each batch naturally space out requests across ~3-4 seconds, so
-    // the transition between batches is already rate-limit safe.
-
-    // When new carriers found, stay on current page (page 1 by default)
-    // Just update pagination info so user sees updated count
-    if (foundThisBatch) {
-      const foundCard = document.querySelector('.stat-card-found');
-      if (foundCard) {
-        foundCard.classList.remove('flash-found');
-        void foundCard.offsetWidth;
-        foundCard.classList.add('flash-found');
+      // Enforce minimum gap between consecutive launches
+      const gap = Date.now() - lastLaunchTime;
+      if (gap < MIN_LAUNCH_GAP_MS) {
+        setTimeout(launchOne, MIN_LAUNCH_GAP_MS - gap);
+        return;
       }
-      // Re-render current page (page 1) so new rows appear there
-      renderResultsPage(state.currentPage);
+
+      const mc = mcQueue.shift();
+      inFlight++;
+      lastLaunchTime = Date.now();
+      state.currentMC = mc;
+
+      // Schedule the next slot — it will self-throttle via the gap check
+      setTimeout(launchOne, MIN_LAUNCH_GAP_MS);
+
+      try {
+        const resp = await fetch(`/api/check-mc?mc=${mc}`, {
+          signal: state.abortController.signal,
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          processResult(data.results?.[0] ?? { mc, found: false, error: 'Empty response' });
+        } else {
+          processResult({ mc, found: false, error: `HTTP ${resp.status}` });
+        }
+      } catch (err) {
+        if (err.name === 'AbortError') {
+          inFlight--;
+          state.scanning = false;
+          log('Scan aborted by user', 'warn');
+          resolveScan();
+          return;
+        }
+        processResult({ mc, found: false, error: err.message });
+      }
+
+      inFlight--;
+      launchOne();  // immediately fill the freed slot
+      checkDone();
     }
-  }
+
+    // Seed the pool — stagger initial launches by the minimum gap
+    for (let i = 0; i < CONCURRENCY; i++) {
+      setTimeout(launchOne, i * MIN_LAUNCH_GAP_MS);
+    }
+  });
 
   // ── Scan complete ──
   state.scanning = false;
