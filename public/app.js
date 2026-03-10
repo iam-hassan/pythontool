@@ -494,6 +494,11 @@ async function startScan() {
     throttledUiUpdate(false);
     updateProgress(current, startMC, endMC);
 
+    // Short delay between batches to avoid triggering FMCSA rate limiting
+    if (current <= endMC && state.scanning && !state.paused) {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+
     // When new carriers found, stay on current page (page 1 by default)
     // Just update pagination info so user sees updated count
     if (foundThisBatch) {

@@ -290,18 +290,14 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const settled = await Promise.allSettled(
-      mcNumbers.map((n) => checkSingleMC(n)),
-    );
-
-    const results = settled.map((r) => {
-      if (r.status === "fulfilled") return r.value;
-      return {
-        mc: null,
-        found: false,
-        error: r.reason?.message || "Unknown error",
-      };
-    });
+    // Sequential requests with a delay between each to avoid FMCSA rate limiting (HTTP 403)
+    const results = [];
+    for (let i = 0; i < mcNumbers.length; i++) {
+      results.push(await checkSingleMC(mcNumbers[i]));
+      if (i < mcNumbers.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
 
     return res.status(200).json({ results });
   } catch (error) {
