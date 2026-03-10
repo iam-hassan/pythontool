@@ -290,14 +290,16 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    // Sequential requests with a delay between each to avoid FMCSA rate limiting (HTTP 403)
-    const results = [];
-    for (let i = 0; i < mcNumbers.length; i++) {
-      results.push(await checkSingleMC(mcNumbers[i]));
-      if (i < mcNumbers.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-    }
+    // Stagger-launch requests: each one starts 350ms after the previous.
+    // Multiple requests overlap in-flight (like a sliding window) so we
+    // never burst, but we're also never fully sequential — giving ~3-4x
+    // the throughput of sequential while staying under FMCSA rate limits.
+    const results = await Promise.all(
+      mcNumbers.map((n, i) =>
+        new Promise((resolve) => setTimeout(resolve, i * 350))
+          .then(() => checkSingleMC(n))
+      )
+    );
 
     return res.status(200).json({ results });
   } catch (error) {

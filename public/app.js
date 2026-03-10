@@ -494,10 +494,9 @@ async function startScan() {
     throttledUiUpdate(false);
     updateProgress(current, startMC, endMC);
 
-    // Short delay between batches to avoid triggering FMCSA rate limiting
-    if (current <= endMC && state.scanning && !state.paused) {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    }
+    // No extra inter-batch delay needed — the staggered launches inside
+    // each batch naturally space out requests across ~3-4 seconds, so
+    // the transition between batches is already rate-limit safe.
 
     // When new carriers found, stay on current page (page 1 by default)
     // Just update pagination info so user sees updated count
