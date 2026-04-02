@@ -144,6 +144,49 @@
         </div>
       </section>
 
+      <!-- File Upload Scanner Section -->
+      <section class="card glass-card" id="fileUploadSection">
+        <div class="card-header">
+          <div class="card-icon">📁</div>
+          <div>
+            <h2 class="card-title">File Scanner</h2>
+            <p class="card-desc">
+              Upload Excel or CSV to scan specific MC numbers
+            </p>
+          </div>
+        </div>
+
+        <div class="file-upload-area" id="dropZone">
+          <input type="file" id="fileInput" accept=".xlsx, .xls, .csv" hidden />
+          <div class="upload-content">
+            <div class="upload-icon">📄</div>
+            <div class="upload-text">
+              <p><strong>Click to upload</strong> or drag and drop</p>
+              <p class="upload-hint">Excel (.xlsx, .xls) or CSV files</p>
+            </div>
+            <div class="file-info hidden" id="fileInfo">
+              <span class="file-name" id="fileName"></span>
+              <button class="btn btn-sm btn-danger" onclick="clearFile(event)">Remove</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="controls" style="margin-top: 1.5rem;">
+          <button
+            class="btn btn-accent btn-lg"
+            id="btnStartFileScan"
+            onclick="startFileScan()"
+            disabled
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <polygon points="5,3 19,12 5,21" />
+            </svg>
+            Start File Scan
+          </button>
+          <span class="input-hint" id="fileScanCount"></span>
+        </div>
+      </section>
+
       <!-- Stats Grid -->
       <section class="stats-grid" id="statsSection">
         <div class="stat-card">

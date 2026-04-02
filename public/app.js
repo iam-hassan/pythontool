@@ -27,6 +27,7 @@ const state = {
   found: 0,
   errors: 0,
   results: [],        // all found carriers (data only, never in DOM)
+  mcList: [],         // extracted MC numbers from file
   currentPage: 1,     // current table page
   startTime: null,
   abortController: null,
@@ -48,6 +49,12 @@ const dom = {
   btnStart: $('btnStart'),
   btnPause: $('btnPause'),
   btnStop: $('btnStop'),
+  fileInput: $('fileInput'),
+  dropZone: $('dropZone'),
+  fileInfo: $('fileInfo'),
+  fileName: $('fileName'),
+  fileScanCount: $('fileScanCount'),
+  btnStartFileScan: $('btnStartFileScan'),
   statChecked: $('statChecked'),
   statFound: $('statFound'),
   statErrors: $('statErrors'),
@@ -386,7 +393,6 @@ function formatTime(seconds) {
 async function startScan() {
   const startMC = parseInt(dom.startMc.value, 10);
   const endMC = parseInt(dom.endMc.value, 10);
-  const batchSize = Math.min(Math.max(parseInt(dom.batchSize.value, 10) || 5, 1), 100);
 
   if (!startMC || !endMC || startMC < 1 || endMC < startMC) {
     showToast('Please enter a valid MC number range (End must be >= Start)', 'error');
@@ -398,154 +404,13 @@ async function startScan() {
     return;
   }
 
-  // Reset state
-  state.scanning = true;
-  state.paused = false;
-  state.startMC = startMC;
-  state.endMC = endMC;
-  state.batchSize = batchSize;
-  state.currentMC = startMC;
-  state.checked = 0;
-  state.found = 0;
-  state.errors = 0;
-  state.results = [];
-  state.currentPage = 1;
-  state.startTime = Date.now();
-  state._lastUiUpdate = 0;
-  state.abortController = new AbortController();
-
-  // Update UI
-  updateControls(true);
-  dom.resultsBody.innerHTML = '';
-  dom.emptyState.classList.add('hidden');
-  dom.progressSection.classList.remove('hidden');
-  dom.btnExportCsv.disabled = true;
-  dom.btnExportExcel.disabled = true;
-  renderResultsPage(1);
-
-  // Add scanning pulse to stats
-  document.querySelectorAll('.stat-card').forEach((c) => c.classList.add('scanning-pulse'));
-
-  const total = endMC - startMC + 1;
-
-  // Use batchSize input as the concurrency window (capped at 8 to stay safe)
-  const CONCURRENCY = Math.min(Math.max(batchSize, 1), 8);
-  // 170 ms between launches = max ~5.9 req/s — well under FMCSA rate limit
-  const MIN_LAUNCH_GAP_MS = 170;
-
-  log(`Starting scan: MC-${startMC} to MC-${endMC} (${total.toLocaleString()} numbers, ${CONCURRENCY} concurrent)`, 'info');
-
-  // ── Sliding-window scan ──────────────────────────────────────────────
-  // Keeps CONCURRENCY requests in-flight at all times. A 170 ms minimum
-  // gap between launches caps the rate to ~5.9 req/s so FMCSA never sees
-  // a burst. Throughput: ~5-6 MC/s → ~2.5-3 min per 1,000 numbers.
-  // ────────────────────────────────────────────────────────────────────
-
   const mcQueue = [];
   for (let mc = startMC; mc <= endMC; mc++) mcQueue.push(mc);
 
-  let inFlight = 0;
-  let lastLaunchTime = 0;
+  state.startMC = startMC;
+  state.endMC = endMC;
 
-  await new Promise((resolveScan) => {
-    function checkDone() {
-      if (mcQueue.length === 0 && inFlight === 0) resolveScan();
-    }
-
-    function processResult(result) {
-      state.checked++;
-      if (result.error) {
-        state.errors++;
-        if (state.errors <= 20 || state.errors % 50 === 0) {
-          log(`MC-${result.mc}: Error: ${result.error}`, 'error');
-        }
-      } else if (result.found) {
-        state.found++;
-        state.results.push(result);
-        log(`MC-${result.mc}: ACTIVE CARRIER "${result.data?.legal_name || 'Unknown'}"`, 'success');
-        const foundCard = document.querySelector('.stat-card-found');
-        if (foundCard) {
-          foundCard.classList.remove('flash-found');
-          void foundCard.offsetWidth;
-          foundCard.classList.add('flash-found');
-        }
-        renderResultsPage(state.currentPage);
-      }
-      throttledUiUpdate(false);
-      updateProgress(startMC + state.checked, startMC, endMC);
-    }
-
-    async function launchOne() {
-      if (!state.scanning) { checkDone(); return; }
-      if (state.paused)    { setTimeout(launchOne, 200); return; }
-      if (inFlight >= CONCURRENCY || mcQueue.length === 0) return;
-
-      // Enforce minimum gap between consecutive launches
-      const gap = Date.now() - lastLaunchTime;
-      if (gap < MIN_LAUNCH_GAP_MS) {
-        setTimeout(launchOne, MIN_LAUNCH_GAP_MS - gap);
-        return;
-      }
-
-      const mc = mcQueue.shift();
-      inFlight++;
-      lastLaunchTime = Date.now();
-      state.currentMC = mc;
-
-      // Schedule the next slot — it will self-throttle via the gap check
-      setTimeout(launchOne, MIN_LAUNCH_GAP_MS);
-
-      try {
-        const resp = await fetch(`/api/check-mc?mc=${mc}`, {
-          signal: state.abortController.signal,
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          processResult(data.results?.[0] ?? { mc, found: false, error: 'Empty response' });
-        } else {
-          processResult({ mc, found: false, error: `HTTP ${resp.status}` });
-        }
-      } catch (err) {
-        if (err.name === 'AbortError') {
-          inFlight--;
-          state.scanning = false;
-          log('Scan aborted by user', 'warn');
-          resolveScan();
-          return;
-        }
-        processResult({ mc, found: false, error: err.message });
-      }
-
-      inFlight--;
-      launchOne();  // immediately fill the freed slot
-      checkDone();
-    }
-
-    // Seed the pool — stagger initial launches by the minimum gap
-    for (let i = 0; i < CONCURRENCY; i++) {
-      setTimeout(launchOne, i * MIN_LAUNCH_GAP_MS);
-    }
-  });
-
-  // ── Scan complete ──
-  state.scanning = false;
-  updateControls(false);
-  document.querySelectorAll('.stat-card').forEach((c) => c.classList.remove('scanning-pulse'));
-
-  // Final forced UI update
-  throttledUiUpdate(true);
-  renderResultsPage(state.currentPage);
-
-  const elapsed = ((Date.now() - state.startTime) / 1000).toFixed(1);
-  log(`Scan complete! Checked ${state.checked.toLocaleString()}, found ${state.found} carriers, ${state.errors} errors in ${elapsed}s`, 'info');
-
-  if (state.results.length > 0) {
-    dom.btnExportCsv.disabled = false;
-    dom.btnExportExcel.disabled = false;
-    showToast(`Scan complete! Found ${state.found} active carriers.`, 'success');
-  } else {
-    showToast('Scan complete. No active carriers found in this range.', 'info');
-  }
+  await internalRunScanner(mcQueue, `Range Scan (MC-${startMC} to MC-${endMC})`);
 }
 
 function waitForResume() {
@@ -594,6 +459,7 @@ function stopScan() {
 
 function updateControls(scanning) {
   dom.btnStart.disabled = scanning;
+  dom.btnStartFileScan.disabled = scanning || state.mcList.length === 0;
   dom.btnPause.disabled = !scanning;
   dom.btnStop.disabled = !scanning;
   dom.startMc.disabled = scanning;
@@ -601,10 +467,18 @@ function updateControls(scanning) {
   dom.batchSize.disabled = scanning;
 
   if (scanning) {
-    dom.btnStart.innerHTML = '<span class="btn-loader"></span> Scanning...';
+    // Determine which button was pressed and show loading
+    const isFileScan = state.mcList.length > 0 && !state.startMC;
+    if (isFileScan) {
+      dom.btnStartFileScan.innerHTML = '<span class="btn-loader"></span> Scanning...';
+    } else {
+      dom.btnStart.innerHTML = '<span class="btn-loader"></span> Scanning...';
+    }
   } else {
     dom.btnStart.innerHTML =
       '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg> Start Scan';
+    dom.btnStartFileScan.innerHTML =
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg> Start File Scan';
     dom.btnPause.innerHTML =
       '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause';
   }
@@ -672,10 +546,14 @@ function exportExcel() {
   ws['!cols'] = headers.map((h) => ({ wch: Math.max(h.length + 2, 15) }));
   XLSX.utils.book_append_sheet(wb, ws, 'Authorized Carriers');
 
+  const mcRange = state.startMC 
+    ? `MC-${state.startMC} to MC-${state.endMC}` 
+    : `Multiple from file (${dom.fileName.textContent})`;
+
   const summaryData = [
     { Field: 'Report', Value: 'FMCSA MC Number Scan' },
     { Field: 'Generated', Value: new Date().toLocaleString() },
-    { Field: 'MC Range', Value: `MC-${state.startMC} to MC-${state.endMC}` },
+    { Field: 'Source', Value: mcRange },
     { Field: 'Total Checked', Value: state.checked },
     { Field: 'Carriers Found', Value: state.found },
     { Field: 'Errors', Value: state.errors },
@@ -712,7 +590,242 @@ document.addEventListener('keydown', (e) => {
 
 // ── Init ─────────────────────────────────────────────────
 
+// ── File Scanner Logic ───────────────────────────────────
+
+function initFileScanner() {
+  if (!dom.dropZone || !dom.fileInput) return;
+
+  dom.dropZone.addEventListener('click', () => dom.fileInput.click());
+
+  dom.dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dom.dropZone.classList.add('drag-over');
+  });
+
+  dom.dropZone.addEventListener('dragleave', () => {
+    dom.dropZone.classList.remove('drag-over');
+  });
+
+  dom.dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dom.dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) {
+      handleFile(e.dataTransfer.files[0]);
+    }
+  });
+
+  dom.fileInput.addEventListener('change', (e) => {
+    if (e.target.files.length) {
+      handleFile(e.target.files[0]);
+    }
+  });
+}
+
+function handleFile(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+      const mcNumbers = [];
+      const mcRegex = /\b(?:MC|MX|FF)?[- ]?(\d{5,8})\b/i;
+
+      json.forEach((row) => {
+        row.forEach((cell) => {
+          if (typeof cell === 'string' || typeof cell === 'number') {
+            const match = String(cell).match(mcRegex);
+            if (match) {
+              const num = parseInt(match[1], 10);
+              if (num && !mcNumbers.includes(num)) {
+                mcNumbers.push(num);
+              }
+            }
+          }
+        });
+      });
+
+      if (mcNumbers.length === 0) {
+        showToast('No MC numbers found in the file', 'error');
+        return;
+      }
+
+      state.mcList = mcNumbers;
+      dom.fileName.textContent = file.name;
+      dom.fileInfo.classList.remove('hidden');
+      dom.fileScanCount.textContent = `Found ${mcNumbers.length} MC numbers`;
+      dom.btnStartFileScan.disabled = false;
+      showToast(`Extracted ${mcNumbers.length} numbers from ${file.name}`, 'success');
+      log(`Extracted ${mcNumbers.length} MC numbers from ${file.name}`, 'info');
+    } catch (err) {
+      log('Error reading file: ' + err.message, 'error');
+      showToast('Could not parse file. Ensure it is a valid Excel or CSV.', 'error');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function clearFile(e) {
+  if (e) e.stopPropagation();
+  state.mcList = [];
+  dom.fileInput.value = '';
+  dom.fileInfo.classList.add('hidden');
+  dom.fileScanCount.textContent = '';
+  dom.btnStartFileScan.disabled = true;
+}
+
+async function startFileScan() {
+  if (state.mcList.length === 0) return;
+  await internalRunScanner(state.mcList, `File Scan (${dom.fileName.textContent})`);
+}
+
+// ── Generic Scanner Core ──────────────────────────────────
+
+async function internalRunScanner(mcQueueOriginal, scanLabel) {
+  const batchSize = Math.min(Math.max(parseInt(dom.batchSize.value, 10) || 5, 1), 100);
+
+  // Reset state
+  state.scanning = true;
+  state.paused = false;
+  state.startMC = 0;
+  state.endMC = 0;
+  state.checked = 0;
+  state.found = 0;
+  state.errors = 0;
+  state.results = [];
+  state.currentPage = 1;
+  state.startTime = Date.now();
+  state._lastUiUpdate = 0;
+  state.abortController = new AbortController();
+
+  const mcQueue = [...mcQueueOriginal];
+  const total = mcQueue.length;
+
+  // Update UI
+  updateControls(true);
+  dom.resultsBody.innerHTML = '';
+  dom.emptyState.classList.add('hidden');
+  dom.progressSection.classList.remove('hidden');
+  dom.btnExportCsv.disabled = true;
+  dom.btnExportExcel.disabled = true;
+  renderResultsPage(1);
+
+  document.querySelectorAll('.stat-card').forEach((c) => c.classList.add('scanning-pulse'));
+
+  const CONCURRENCY = Math.min(Math.max(batchSize, 1), 8);
+  const MIN_LAUNCH_GAP_MS = 170;
+
+  log(`Starting ${scanLabel}: ${total.toLocaleString()} numbers, ${CONCURRENCY} concurrent`, 'info');
+
+  let inFlight = 0;
+  let lastLaunchTime = 0;
+
+  return new Promise((resolveScan) => {
+    function checkDone() {
+      if (mcQueue.length === 0 && inFlight === 0) {
+        completeScan();
+        resolveScan();
+      }
+    }
+
+    function processResult(result) {
+      state.checked++;
+      if (result.error) {
+        state.errors++;
+        if (state.errors <= 20 || state.errors % 50 === 0) {
+          log(`MC-${result.mc}: Error: ${result.error}`, 'error');
+        }
+      } else if (result.found) {
+        state.found++;
+        state.results.push(result);
+        log(`MC-${result.mc}: ACTIVE CARRIER "${result.data?.legal_name || 'Unknown'}"`, 'success');
+        const foundCard = document.querySelector('.stat-card-found');
+        if (foundCard) {
+          foundCard.classList.remove('flash-found');
+          void foundCard.offsetWidth;
+          foundCard.classList.add('flash-found');
+        }
+        renderResultsPage(state.currentPage);
+      }
+      throttledUiUpdate(false);
+      
+      // Update progress using checked count relative to total
+      const pct = Math.floor((state.checked / total) * 100);
+      dom.progressFill.style.width = `${pct}%`;
+      dom.progressPct.textContent = `${pct}%`;
+      dom.progressLabel.textContent = `Scanning... (${state.checked}/${total})`;
+    }
+
+    async function launchOne() {
+      if (!state.scanning) { checkDone(); return; }
+      if (state.paused) { setTimeout(launchOne, 200); return; }
+      if (inFlight >= CONCURRENCY || mcQueue.length === 0) return;
+
+      const gap = Date.now() - lastLaunchTime;
+      if (gap < MIN_LAUNCH_GAP_MS) {
+        setTimeout(launchOne, MIN_LAUNCH_GAP_MS - gap);
+        return;
+      }
+
+      const mc = mcQueue.shift();
+      inFlight++;
+      lastLaunchTime = Date.now();
+
+      setTimeout(launchOne, MIN_LAUNCH_GAP_MS);
+
+      try {
+        const resp = await fetch(`/api/check-mc?mc=${mc}`, {
+          signal: state.abortController.signal,
+        });
+        const json = await resp.json();
+        const result = json.results?.[0] || { mc, found: false, error: 'Empty response' };
+        processResult(result);
+      } catch (err) {
+        if (err.name !== 'AbortError') processResult({ mc, found: false, error: err.message });
+      } finally {
+        inFlight--;
+        checkDone();
+      }
+    }
+
+    // Launch initial batch
+    for (let i = 0; i < CONCURRENCY; i++) {
+        setTimeout(launchOne, i * (MIN_LAUNCH_GAP_MS + 20));
+    }
+  });
+}
+
+function completeScan() {
+  state.scanning = false;
+  updateControls(false);
+  document.querySelectorAll('.stat-card').forEach((c) => c.classList.remove('scanning-pulse'));
+  dom.progressLabel.textContent = 'Scan Complete';
+  dom.progressEta.textContent = '';
+  
+  if (state.found > 0) {
+    dom.btnExportCsv.disabled = false;
+    dom.btnExportExcel.disabled = false;
+    showToast(`Scan complete! Found ${state.found} active carriers.`, 'success');
+  } else {
+    showToast('Scan complete. No active carriers found.', 'info');
+  }
+}
+
+// ── Keyboard Shortcuts ───────────────────────────────────
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && document.activeElement === dom.quickInput) {
+    quickCheck();
+  }
+});
+
+// ── Init ─────────────────────────────────────────────────
+
 document.addEventListener('DOMContentLoaded', () => {
   log('Application loaded', 'info');
   testConnection();
+  initFileScanner();
 });
